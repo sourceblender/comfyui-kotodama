@@ -12,9 +12,9 @@ the save route is written against the obvious abuses:
 - the API key is write-only: it is never returned, logged or shown;
 - changing the endpoint needs explicit confirmation AND clears the saved key
   unless a new key is sent with it, so redirecting the URL cannot forward your
-  existing key to someone else's server. If the key is set where the panel
-  cannot remove it (an environment variable or the node folder's .env), the
-  endpoint cannot be changed from the panel at all;
+  existing key to someone else's server. If the key is still in the node
+  folder's legacy .env, which the panel cannot remove, the endpoint cannot be
+  changed and the key cannot be cleared from the panel;
 - the status never reports absolute paths;
 - a connection test only ever uses saved configuration, so the server is not
   an arbitrary URL probe.
@@ -54,13 +54,6 @@ def status_payload() -> dict:
         "fallback_models": fallback,
         "timeout": config.request_timeout(),
         "source": {"url": url_source, "key": key_source},
-        # A value from the process environment wins over the panel; say so.
-        "shadowed": {
-            "url": config.shadowed_by_environment("KOTODAMA_BASE_URL", "LITELLM_BASE_URL"),
-            "key": config.shadowed_by_environment("KOTODAMA_API_KEY", "LITELLM_API_KEY"),
-            "fallback_models": config.shadowed_by_environment("KOTODAMA_FALLBACK_MODELS"),
-            "timeout": config.shadowed_by_environment("KOTODAMA_TIMEOUT"),
-        },
         "writable": config.user_env_file() is not None,
         "config_location": config.config_location(),
     }
@@ -212,15 +205,11 @@ def plan_settings_update(body: dict) -> tuple[dict[str, str | None], str | None]
         if url and not config.valid_endpoint(url):
             return {}, "invalid_url"
         if url != config.base_url():
-            # A URL in the process environment outranks the panel: the save would
-            # change nothing but still drop the key, and report success.
-            if config.shadowed_by_environment("KOTODAMA_BASE_URL", "LITELLM_BASE_URL"):
-                return {}, "url_shadowed"
             if body.get("confirm_url_change") is not True:
                 return {}, "confirm_url_change"
             # Never let a new endpoint receive the key that was saved for the old one.
-            # A key the panel cannot delete would follow the URL, even with a new
-            # key saved here (the environment outranks it), so refuse outright.
+            # A key in the legacy node .env would follow the URL once the panel's
+            # copy is deleted, so refuse until it is moved or removed.
             if config.key_outside_panel():
                 return {}, "key_outside_panel"
             updates["KOTODAMA_API_KEY"] = None
@@ -275,7 +264,7 @@ async def post_settings(request):
         return _refuse(web, 400, "invalid_json")
     updates, error = plan_settings_update(body)
     if error:
-        conflict = ("confirm_url_change", "key_outside_panel", "url_shadowed")
+        conflict = ("confirm_url_change", "key_outside_panel")
         return _refuse(web, 409 if error in conflict else 400, error)
     try:
         config.write_user_settings(updates)

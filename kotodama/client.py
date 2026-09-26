@@ -43,7 +43,7 @@ def _request(path: str, payload: dict | None, timeout: float) -> dict:
     if not endpoint:
         raise LiteLLMError(
             "Kotodama needs a valid KOTODAMA_BASE_URL (http(s), no URL credentials, "
-            "query, or fragment) in the user or node .env file or process environment."
+            "query, or fragment) in Settings -> Kotodama."
         )
     url = f"{endpoint}{path}"
     key = config.api_key()
@@ -62,7 +62,7 @@ def _request(path: str, payload: dict | None, timeout: float) -> dict:
     except urllib.error.HTTPError as exc:
         hint = ""
         if exc.code in (401, 403):
-            hint = "  Check KOTODAMA_API_KEY in the node's .env or environment."
+            hint = "  Check the API key in Settings -> Kotodama."
         raise LiteLLMError(
             f"Endpoint returned HTTP {exc.code} for {url}.{hint}"
         ) from exc

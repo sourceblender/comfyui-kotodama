@@ -8,6 +8,7 @@ import pytest
 
 from kotodama import client, config
 from kotodama.client import LiteLLMError
+from tests.conftest import kotodama_settings
 
 
 class _FakeResp:
@@ -99,7 +100,7 @@ def test_plain_urlerror_keeps_the_unreachable_hint() -> None:
     [("0", 1.0), ("0.0", 1.0), ("-5", 1.0), ("0.5", 1.0), ("120", 120.0), ("not-a-number", 300.0)],
 )
 def test_kotodama_timeout_is_floored_and_parsed(value: str, want: float) -> None:
-    with patch.dict(os.environ, {"KOTODAMA_TIMEOUT": value}):
+    with kotodama_settings({"KOTODAMA_TIMEOUT": value}):
         assert config.request_timeout() == want
 
 
@@ -160,22 +161,27 @@ def test_model_cache_is_endpoint_scoped() -> None:
 
 
 def test_new_names_win_and_legacy_names_still_work() -> None:
-    with patch.dict(
-        os.environ, {"KOTODAMA_BASE_URL": "https://new.example", "LITELLM_BASE_URL": "https://old.example"}
-    ):
+    with kotodama_settings({"KOTODAMA_BASE_URL": "https://new.example", "LITELLM_BASE_URL": "https://old.example"}):
         assert config.base_url() == "https://new.example"
-    with patch.dict(os.environ, {"LITELLM_BASE_URL": "https://old.example"}):
-        with patch.object(config, "_read_env_file", return_value={}):
-            assert config.base_url() == "https://old.example"
-    with patch.dict(os.environ, {"KOTODAMA_API_KEY": "new-key", "LITELLM_API_KEY": "old-key"}):
+    with kotodama_settings({"LITELLM_BASE_URL": "https://old.example"}):
+        assert config.base_url() == "https://old.example"
+    with kotodama_settings({"KOTODAMA_API_KEY": "new-key", "LITELLM_API_KEY": "old-key"}):
         assert config.api_key() == "new-key"
 
 
-@pytest.mark.parametrize("process_value", ["", None], ids=["empty process env", "missing process env"])
-def test_process_env_falls_through_to_dotenv(process_value: str | None) -> None:
-    env = {} if process_value is None else {"KOTODAMA_FALLBACK_MODELS": process_value}
-    with patch.dict(os.environ, env):
-        if process_value is None:
-            os.environ.pop("KOTODAMA_FALLBACK_MODELS", None)
-        with patch.object(config, "_read_env_file", return_value={"KOTODAMA_FALLBACK_MODELS": "from-file"}):
-            assert config._lookup("KOTODAMA_FALLBACK_MODELS", "default") == "from-file"
+def test_user_file_beats_legacy_node_dotenv() -> None:
+    with kotodama_settings({"KOTODAMA_FALLBACK_MODELS": "from-user"}, {"KOTODAMA_FALLBACK_MODELS": "from-node"}):
+        assert config._lookup("KOTODAMA_FALLBACK_MODELS", "default") == "from-user"
+    with kotodama_settings({"KOTODAMA_FALLBACK_MODELS": ""}, {"KOTODAMA_FALLBACK_MODELS": "from-node"}):
+        assert config._lookup("KOTODAMA_FALLBACK_MODELS", "default") == "from-node"  # empty falls through
+
+
+@pytest.mark.parametrize(
+    "name", ["KOTODAMA_BASE_URL", "LITELLM_BASE_URL", "KOTODAMA_API_KEY", "LITELLM_API_KEY", "KOTODAMA_TIMEOUT",
+             "KOTODAMA_FALLBACK_MODELS", "KOTODAMA_ALLOWED_ORIGINS"],
+)
+def test_process_environment_is_ignored(name: str) -> None:
+    # 0.3.0: settings come only from the panel's user file (or the legacy node .env).
+    with kotodama_settings({}, {}), patch.dict(os.environ, {name: "https://from-env.example"}):
+        assert config._lookup(name, "default") == "default"
+        assert config.setting_with_source(name) == ("", "none")

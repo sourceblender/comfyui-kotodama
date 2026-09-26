@@ -5,14 +5,14 @@ import json
 import os
 import socket
 import threading
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 pytest.importorskip("aiohttp")
 
-from kotodama import client, config, settings  # noqa: E402
+from kotodama import client, config, settings
+from tests.conftest import kotodama_settings  # noqa: E402
 
 SENTINEL = "SENTINEL-KOTODAMA-KEY-7b5e"
 
@@ -48,13 +48,9 @@ def run(coro):
 @pytest.fixture
 def configured():
     """A saved endpoint and key, with no user-dir or node .env interfering."""
-    with patch.dict(
-        os.environ, {"KOTODAMA_BASE_URL": "https://example.invalid", "KOTODAMA_API_KEY": SENTINEL}, clear=True
-    ):
-        with patch.object(config, "user_env_file", return_value=None):
-            with patch.object(config, "_read_env_file", return_value={}):
-                settings._LAST_TEST = 0.0
-                yield
+    with kotodama_settings({"KOTODAMA_BASE_URL": "https://example.invalid", "KOTODAMA_API_KEY": SENTINEL}):
+        settings._LAST_TEST = 0.0
+        yield
 
 
 def test_saved_endpoint_only_and_key_never_returned(configured) -> None:
@@ -114,32 +110,22 @@ def test_credential_shaped_urls_are_refused(url: str) -> None:
         assert config.safe_base_url() is None
 
 
-def test_env_beats_userdir_beats_node_dotenv() -> None:
-    def read(path):
-        if "kotodama-user" in str(path):
-            return {"KOTODAMA_BASE_URL": "https://user.example"}
-        return {"KOTODAMA_BASE_URL": "https://node.example"}
-
-    with patch.object(config, "user_env_file", return_value=Path("/tmp/kotodama-user/.env")):
-        with patch.object(config, "_read_env_file", side_effect=read):
-            with patch.dict(os.environ, {}, clear=True):
-                assert config.base_url() == "https://user.example"
-                assert config.setting_with_source("KOTODAMA_BASE_URL")[1] == "userdir"
-            with patch.dict(os.environ, {"KOTODAMA_BASE_URL": "https://env.example"}, clear=True):
-                assert config.base_url() == "https://env.example"
-                assert config.setting_with_source("KOTODAMA_BASE_URL")[1] == "env"
-            with patch.dict(os.environ, {"KOTODAMA_BASE_URL": "", "KOTODAMA_API_KEY": ""}, clear=True):
-                assert config.base_url() == "https://user.example"
-                assert config.setting_with_source("KOTODAMA_BASE_URL")[1] == "userdir"
-                assert config.api_key() == ""
+def test_user_file_beats_node_dotenv_and_the_environment_is_ignored() -> None:
+    user = {"KOTODAMA_BASE_URL": "https://user.example"}
+    node = {"KOTODAMA_BASE_URL": "https://node.example", "KOTODAMA_API_KEY": "from-node"}
+    with kotodama_settings(user, node):
+        with patch.dict(os.environ, {"KOTODAMA_BASE_URL": "https://env.example", "KOTODAMA_API_KEY": "env-key"}):
+            assert config.base_url() == "https://user.example"
+            assert config.setting_with_source("KOTODAMA_BASE_URL")[1] == "userdir"
+            # No key in the user file: the legacy node .env fills in, never the environment.
+            assert config.api_key() == "from-node"
+            assert config.setting_with_source("KOTODAMA_API_KEY")[1] == "dotenv"
 
 
-def test_empty_environment_key_falls_through() -> None:
-    with patch.object(config, "user_env_file", return_value=None):
-        with patch.object(config, "_read_env_file", return_value={"KOTODAMA_API_KEY": "from-file"}):
-            with patch.dict(os.environ, {"KOTODAMA_API_KEY": ""}, clear=True):
-                assert config.api_key() == "from-file"
-                assert config.setting_with_source("KOTODAMA_API_KEY")[1] == "dotenv"
+def test_empty_user_value_falls_through_to_node_dotenv() -> None:
+    with kotodama_settings({"KOTODAMA_API_KEY": ""}, {"KOTODAMA_API_KEY": "from-file"}):
+        assert config.api_key() == "from-file"
+        assert config.setting_with_source("KOTODAMA_API_KEY")[1] == "dotenv"
 
 
 def _serve(reply: bytes):
@@ -175,12 +161,8 @@ def test_redirect_never_forwards_bearer_key() -> None:
         "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
     ).encode()
     first_port, first_seen, first_thread = _serve(redirect)
-    with patch.dict(
-        os.environ, {"KOTODAMA_BASE_URL": f"http://127.0.0.1:{first_port}", "KOTODAMA_API_KEY": SENTINEL}, clear=True
-    ):
-        with patch.object(config, "user_env_file", return_value=None):
-            with patch.object(config, "_read_env_file", return_value={}):
-                result = settings.probe_saved_endpoint()
+    with kotodama_settings({"KOTODAMA_BASE_URL": f"http://127.0.0.1:{first_port}", "KOTODAMA_API_KEY": SENTINEL}):
+        result = settings.probe_saved_endpoint()
     first_thread.join(timeout=2)
     second_thread.join(timeout=2)
     assert result == {"ok": False, "status": 302, "error": "bad_response"}
@@ -310,14 +292,17 @@ def test_invalid_input_is_refused_and_nothing_is_written(user_dir, body, error) 
     assert not user_dir.exists()
 
 
-def test_environment_variables_are_reported_as_overriding_the_panel(user_dir) -> None:
-    with patch.dict(os.environ, {"KOTODAMA_BASE_URL": "https://env.example"}):
+def test_environment_variables_no_longer_override_the_panel(user_dir) -> None:
+    save({"base_url": "https://panel.example", "confirm_url_change": True, "api_key": SENTINEL})
+    with patch.dict(os.environ, {"KOTODAMA_BASE_URL": "https://env.example", "KOTODAMA_API_KEY": "env-key"}):
         body = json.loads(run(settings.get_status(None)).body)
-    assert body["shadowed"]["url"] is True and body["shadowed"]["key"] is False
+        assert config.api_key() == SENTINEL
+    assert body["url"] == "https://panel.example" and body["source"] == {"url": "userdir", "key": "userdir"}
+    assert "shadowed" not in body
 
 
 def test_no_user_directory_means_no_save(tmp_path) -> None:
-    with patch.dict(os.environ, {}, clear=True), patch.object(config, "user_env_file", return_value=None):
+    with patch.object(config, "user_env_file", return_value=None):
         status, body = save({"timeout": 30})
     assert (status, body["error"]) == (503, "no_user_directory")
 
@@ -329,39 +314,41 @@ def test_no_user_directory_means_no_save(tmp_path) -> None:
         ({"origin": "https://same.example", "host": "same.example:443", "scheme": "https"}, {}),
         # TLS reverse proxy: the browser sees https, ComfyUI sees plain http.
         ({"origin": "https://comfy.example", "host": "comfy.example"},
-         {"KOTODAMA_ALLOWED_ORIGINS": "https://comfy.example, https://other.example"}),
+         {"KOTODAMA_ALLOWED_ORIGINS": "https://comfy.example, https://other.example"}),  # set by hand in the user file
     ],
     ids=["default http port", "default https port", "allowed proxy origin"],
 )
 def test_same_origin_accepts_the_page_itself(user_dir, kw, env) -> None:
-    with patch.dict(os.environ, env):
-        status, _ = save({"timeout": 30}, **kw)
+    if env:
+        user_dir.parent.mkdir(parents=True, exist_ok=True)
+        user_dir.write_text("".join(f"{k}={v}\n" for k, v in env.items()))
+    status, _ = save({"timeout": 30}, **kw)
     assert status == 200
 
 
-@pytest.mark.parametrize(
-    ("where", "name"),
-    [("env", "LITELLM_API_KEY"), ("env", "KOTODAMA_API_KEY"),
-     ("dotenv", "LITELLM_API_KEY"), ("dotenv", "KOTODAMA_API_KEY")],
-)
+@pytest.mark.parametrize("name", ["LITELLM_API_KEY", "KOTODAMA_API_KEY"])
 @pytest.mark.parametrize("new_key", [None, "replacement"], ids=["no new key", "with new key"])
-def test_endpoint_change_refused_when_the_key_lives_outside_the_panel(user_dir, where, name, new_key) -> None:
-    # Yua's repro: URL saved in the user directory, key only in the process
-    # environment (or the node folder's .env). Deleting the panel's key would
-    # leave that one in force, and it would be sent to the new endpoint.
+def test_endpoint_change_refused_when_the_key_lives_in_the_legacy_node_dotenv(user_dir, name, new_key) -> None:
+    # Yua's repro: deleting the panel's key would leave the node .env key in
+    # force, and it would be sent to the new endpoint.
     config.write_user_settings({"KOTODAMA_BASE_URL": "https://good.example"})
-    env = {name: "OLD-ENV-KEY"} if where == "env" else {}
-    if where == "dotenv":
-        config.ENV_FILE.write_text(f"{name}=OLD-ENV-KEY\n")
+    config.ENV_FILE.write_text(f"{name}=OLD-NODE-KEY\n")
     body = {"base_url": "https://new.example", "confirm_url_change": True}
     if new_key:
         body["api_key"] = new_key
-    with patch.dict(os.environ, env):
-        assert settings.plan_settings_update(body) == ({}, "key_outside_panel")
-        status, got = save(body)
-        assert (status, got["error"]) == (409, "key_outside_panel")
-        assert config.base_url() == "https://good.example"
-        assert config.api_key() == "OLD-ENV-KEY"
+    assert settings.plan_settings_update(body) == ({}, "key_outside_panel")
+    status, got = save(body)
+    assert (status, got["error"]) == (409, "key_outside_panel")
+    assert config.base_url() == "https://good.example"
+    assert config.api_key() == "OLD-NODE-KEY"
+
+
+def test_an_environment_key_does_not_block_or_follow_an_endpoint_change(user_dir) -> None:
+    config.write_user_settings({"KOTODAMA_BASE_URL": "https://good.example", "KOTODAMA_API_KEY": "PANEL-KEY"})
+    with patch.dict(os.environ, {"KOTODAMA_API_KEY": "ENV-KEY", "KOTODAMA_BASE_URL": "https://env.example"}):
+        status, body = save({"base_url": "https://new.example", "confirm_url_change": True})
+        assert status == 200 and body["url"] == "https://new.example" and body["key_set"] is False
+        assert config.api_key() == ""  # the env key is not used
 
 
 def test_endpoint_change_removes_a_legacy_key_in_the_user_file(user_dir) -> None:
@@ -392,18 +379,21 @@ def test_status_never_reports_an_absolute_path(user_dir, tmp_path) -> None:
         assert payload["config_location"] == "ComfyUI user directory (kotodama/.env)"
 
 
-@pytest.mark.parametrize("where", ["env", "dotenv"])
-def test_clear_key_refused_when_the_key_lives_outside_the_panel(user_dir, where) -> None:
+def test_clear_key_refused_when_the_key_lives_in_the_legacy_node_dotenv(user_dir) -> None:
     # Yua's repro: Clear returned 200 and the UI said "Key cleared." while the
-    # external key stayed in force.
+    # node .env key stayed in force.
     config.write_user_settings({"KOTODAMA_API_KEY": "PANEL-KEY"})
-    env = {"KOTODAMA_API_KEY": "ENV-KEY"} if where == "env" else {}
-    if where == "dotenv":
-        config.ENV_FILE.write_text("KOTODAMA_API_KEY=ENV-KEY\n")
-    with patch.dict(os.environ, env):
-        status, got = save({"clear_api_key": True})
-        assert (status, got["error"]) == (409, "key_outside_panel")
+    config.ENV_FILE.write_text("KOTODAMA_API_KEY=NODE-KEY\n")
+    status, got = save({"clear_api_key": True})
+    assert (status, got["error"]) == (409, "key_outside_panel")
     assert config._read_env_file(user_dir)["KOTODAMA_API_KEY"] == "PANEL-KEY"  # nothing written
+
+
+def test_clear_key_ignores_an_environment_key(user_dir) -> None:
+    config.write_user_settings({"KOTODAMA_API_KEY": "PANEL-KEY"})
+    with patch.dict(os.environ, {"KOTODAMA_API_KEY": "ENV-KEY"}):
+        status, body = save({"clear_api_key": True})
+        assert status == 200 and body["key_set"] is False
 
 
 class SizedResponse(Response):
@@ -447,10 +437,9 @@ def test_a_body_arriving_in_pieces_is_read_whole(user_dir) -> None:
 
 
 @pytest.mark.parametrize("name", ["KOTODAMA_BASE_URL", "LITELLM_BASE_URL"])
-def test_url_edit_refused_when_the_environment_sets_the_url(user_dir, name) -> None:
-    # Found by Aoi on the immich port: 200, nothing changed, and the key was dropped.
+def test_url_edit_applies_even_when_the_environment_sets_a_url(user_dir, name) -> None:
+    # Before 0.3.0 this was refused as url_shadowed; the environment is no longer read.
     config.write_user_settings({"KOTODAMA_API_KEY": "PANEL-KEY"})
     with patch.dict(os.environ, {name: "https://env.example"}):
         status, got = save({"base_url": "https://panel.example", "confirm_url_change": True})
-    assert (status, got["error"]) == (409, "url_shadowed")
-    assert config._read_env_file(user_dir) == {"KOTODAMA_API_KEY": "PANEL-KEY"}
+        assert status == 200 and got["url"] == "https://panel.example"
