@@ -225,7 +225,7 @@ def write_user_settings(updates: dict[str, str | None]) -> Path:
             current[key] = value
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    body = "# Written by the Kotodama settings panel. Environment variables override these values.\n"
+    body = "# Written by the Kotodama settings panel (Settings -> Kotodama).\n"
     body += "".join(f"{key}={value}\n" for key, value in current.items())
     tmp = path.with_name(f".{path.name}.tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
