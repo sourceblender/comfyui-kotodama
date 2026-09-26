@@ -6,3 +6,4 @@ __pycache__/
 *.pyc
 evals/
 kotodama-github-banner.png
+uv.lock

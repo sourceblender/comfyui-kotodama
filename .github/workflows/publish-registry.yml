@@ -44,7 +44,11 @@ jobs:
 
           names = zipfile.ZipFile("node.zip").namelist()
           banned = ("evals/", "tests/", ".github/", ".claude/", "__pycache__/")
-          leaked = [n for n in names if n.startswith(banned) or n.rsplit("/", 1)[-1] == ".env" or n.endswith(".pyc")]
+          dev_only = {"uv.lock"}
+          leaked = [
+              n for n in names
+              if n.startswith(banned) or n.rsplit("/", 1)[-1] == ".env" or n.endswith(".pyc") or n in dev_only
+          ]
           required = {"__init__.py", "pyproject.toml", "LICENSE", "README.md", "web/settings.js"}
           missing = sorted(required - set(names))
           size = sum(i.file_size for i in zipfile.ZipFile("node.zip").infolist())

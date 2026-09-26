@@ -1,6 +1,6 @@
 [project]
 name = "comfyui-kotodama"
-version = "0.2.0"
+version = "0.2.1"
 description = "Text-to-image prompt enhancer for ComfyUI using an OpenAI-compatible chat endpoint"
 requires-python = ">=3.10"
 dependencies = []
