@@ -8,6 +8,6 @@ Include what you found, how to reproduce it, and which version or commit you tes
 
 ## Scope notes
 
-Kotodama sends your prompt text to the OpenAI-compatible endpoint you configure. Settings saved from the panel, including the API key, are stored in the ComfyUI user directory (`kotodama/.env`); the key can also come from an environment variable (which overrides the panel) or a `.env` in the node folder (which the panel overrides). The API key is write-only in the settings panel and is never returned to the browser.
+Kotodama sends your prompt text to the OpenAI-compatible endpoint you configure. Settings saved from the panel, including the API key, are stored in the ComfyUI user directory (`kotodama/.env`); a `.env` in the node folder is still read as a deprecated fallback, which the panel overrides. Process environment variables are not read. The API key is write-only in the settings panel and is never returned to the browser.
 
 ComfyUI has no login by default. Anyone who can reach your ComfyUI page can use the node and change its settings, so keep ComfyUI on a trusted network. Reports about protecting an internet-exposed ComfyUI itself belong with the ComfyUI project.

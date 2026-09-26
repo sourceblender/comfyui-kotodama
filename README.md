@@ -53,20 +53,14 @@ Click **Save** (it asks you to confirm an endpoint change), then **Test connecti
 
 > **Anyone who can use your ComfyUI page can change these settings.** ComfyUI has no login by default, so keep it private. The key is never sent back to the browser.
 
-- **Behind an HTTPS reverse proxy?** The panel only accepts saves from ComfyUI's own origin. Set `KOTODAMA_ALLOWED_ORIGINS` (comma-separated, exact origins such as `https://comfy.example.com`) in the environment or the `.env` file, otherwise saving is refused with `cross_origin`.
-- **Key set in the environment or the node folder's `.env`?** The panel won't change the endpoint or clear the key (`key_outside_panel`), so a key can never be sent to a new server behind your back. Change both where the key lives.
+- **Behind an HTTPS reverse proxy?** The panel only accepts saves from ComfyUI's own origin. Add a line to `<ComfyUI user directory>/kotodama/.env` by hand, for example `KOTODAMA_ALLOWED_ORIGINS=https://comfy.example.com` (comma-separated, exact origins). Otherwise saving is refused with `cross_origin`. The panel never writes this setting.
+- **Upgrading from a node-folder `.env`?** An older `.env` in this node's folder is still read as a deprecated fallback, and the panel tells you when a value comes from it. Save the values in the panel to move them over. While the key still lives in that file, the panel won't change the endpoint or clear the key (`key_outside_panel`), so a key can never be sent to a new server behind your back. Remove the key from the old file first.
 
-**Alternative: environment variables or a `.env` file.** These still work and **take precedence** over the panel (the panel says when they do). Copy `.env.example` to `.env` in this node folder:
+**Environment variables are not read** (since 0.3.0). `KOTODAMA_*` and `LITELLM_*` variables in ComfyUI's environment are ignored, and the panel is the one place Kotodama is configured. Precedence: `<ComfyUI user directory>/kotodama/.env` (what the panel writes), then the node folder's legacy `.env`, then built-in defaults.
 
-```dotenv
-KOTODAMA_BASE_URL=http://127.0.0.1:4000
-KOTODAMA_API_KEY=your-key-if-required
-KOTODAMA_FALLBACK_MODELS=your-model-id
-```
+Use HTTPS for a remote service. The timeout has a one-second minimum.
 
-Use HTTPS for a remote service. Existing installs using `LITELLM_BASE_URL` and `LITELLM_API_KEY` continue to work; the `KOTODAMA_*` names win when both are present. `KOTODAMA_TIMEOUT` has a one-second minimum. Precedence is process environment, then `<ComfyUI user directory>/kotodama/.env`, then `.env` in this node folder.
-
-**Keep the API key out of node widgets.** ComfyUI saves widget values in workflow JSON and may embed them in generated PNG metadata. `.env` is ignored by Git; keep the file private and restrict access to your ComfyUI host. Anyone who can administer an exposed ComfyUI instance may be able to run nodes or inspect its files, so protect ComfyUI itself.
+**Keep the API key out of node widgets.** ComfyUI saves widget values in workflow JSON and may embed them in generated PNG metadata. Settings files are ignored by Git; keep them private and restrict access to your ComfyUI host. Anyone who can administer an exposed ComfyUI instance may be able to run nodes or inspect its files, so protect ComfyUI itself.
 
 ## Try the example
 
@@ -89,7 +83,7 @@ The node fails visibly on connection, authentication, malformed response, trunca
 Your input text and selected system prompt are sent to the configured chat endpoint. Choose an endpoint whose data handling fits your workflow. The generated prompt can also be saved with the workflow or image by ComfyUI.
 
 - **Configure endpoint or fallback model** shows in the model menu: set the **Endpoint URL** in Settings → Kotodama and, if `/v1/models` is unavailable, **Fallback models**; then refresh ComfyUI's node menu.
-- **401/403**: re-enter the **API key** in Settings (or check `KOTODAMA_API_KEY` if you use env vars) and your provider's permissions.
+- **401/403**: re-enter the **API key** in Settings and check your provider's permissions.
 - **Connection or timeout**: check the endpoint from the ComfyUI host; raise **Timeout** in Settings, lower `max_tokens`, or use a faster model if generation is slow.
 - **Redirect response**: set the **Endpoint URL** to the final endpoint. Kotodama refuses redirects so the bearer key cannot be forwarded to another URL.
 - **Wrong model list**: set **Fallback models** to the provider's exact IDs and refresh. A fallback menu does not confirm the endpoint is reachable.
